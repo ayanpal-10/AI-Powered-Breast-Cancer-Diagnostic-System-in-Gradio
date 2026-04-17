@@ -1,0 +1,166 @@
+import gradio as gr
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+# ── Replace this with your actual trained model ──────────────────────────────
+def predict(radius, texture, perimeter, area, smoothness, compactness):
+    score = (
+        0.25 * (radius - 6) / 24 +
+        0.10 * (texture - 9) / 31 +
+        0.20 * (perimeter - 40) / 150 +
+        0.25 * (area - 140) / 2360 +
+        0.05 * (smoothness - 0.05) / 0.12 +
+        0.15 * (compactness - 0.02) / 0.33
+    )
+    risk_pct = round(score * 100, 1)
+    label = "Malignant" if risk_pct > 50 else "Benign"
+    confidence = round(60 + abs(score - 0.5) * 80, 1)
+    return label, risk_pct, confidence
+# ─────────────────────────────────────────────────────────────────────────────
+
+FEATURE_NAMES   = ["Radius", "Texture", "Perimeter", "Area", "Smoothness", "Compactness"]
+FEATURE_RANGES  = [(6,30), (9,40), (40,190), (140,2500), (0.05,0.17), (0.02,0.35)]
+
+
+def normalise(val, lo, hi):
+    return max(0.0, min(1.0, (val - lo) / (hi - lo)))
+
+
+def make_radar(vals):
+    norms = [normalise(v, lo, hi) for v, (lo, hi) in zip(vals, FEATURE_RANGES)]
+    N = len(FEATURE_NAMES)
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    angles += angles[:1]
+    data = norms + norms[:1]
+
+    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor("#f8f9fc")
+    ax.set_facecolor("#f0f4fb")
+
+    ax.plot(angles, data, color="#185FA5", linewidth=2)
+    ax.fill(angles, data, color="#185FA5", alpha=0.18)
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(FEATURE_NAMES, fontsize=10, color="#444")
+    ax.set_yticks([0.25, 0.5, 0.75, 1.0])
+    ax.set_yticklabels(["25%", "50%", "75%", "100%"], fontsize=7, color="#aaa")
+    ax.set_ylim(0, 1)
+    ax.grid(color="#ccc", linewidth=0.5)
+    ax.spines["polar"].set_visible(False)
+    plt.tight_layout()
+    return fig
+
+
+def make_risk_bar(risk_pct):
+    fig, ax = plt.subplots(figsize=(5, 0.6))
+    fig.patch.set_facecolor("#f8f9fc")
+    ax.set_facecolor("#f8f9fc")
+
+    color = "#E24B4A" if risk_pct > 50 else "#639922"
+    ax.barh(0, risk_pct, height=0.5, color=color, left=0)
+    ax.barh(0, 100 - risk_pct, height=0.5, color="#e0e0e0", left=risk_pct)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(-0.5, 0.5)
+    ax.axis("off")
+    ax.text(risk_pct / 2, 0, f"{risk_pct}%", ha="center", va="center",
+            fontsize=9, color="white", fontweight="bold")
+    plt.tight_layout(pad=0.2)
+    return fig
+
+
+def run_diagnostic(radius, texture, perimeter, area, smoothness, compactness):
+    vals = [radius, texture, perimeter, area, smoothness, compactness]
+    label, risk_pct, confidence = predict(*vals)
+
+    # Styled diagnosis HTML
+    if label == "Benign":
+        color, bg, border = "#3B6D11", "#EAF3DE", "#C0DD97"
+        icon = "✔"
+        sub = "Low risk — no malignancy detected"
+    else:
+        color, bg, border = "#A32D2D", "#FCEBEB", "#F7C1C1"
+        icon = "⚠"
+        sub = "Elevated risk — further evaluation recommended"
+
+    diag_html = f"""
+    <div style="border-radius:12px; background:{bg}; border:1px solid {border};
+                padding:18px 22px; display:flex; align-items:center; gap:16px;">
+      <div style="font-size:32px; line-height:1;">{icon}</div>
+      <div>
+        <div style="font-size:26px; font-weight:600; color:{color};">{label}</div>
+        <div style="font-size:13px; color:#666; margin-top:2px;">{sub}</div>
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;">
+      <div style="background:#f0f4fb; border-radius:8px; padding:10px 14px;">
+        <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.05em;">Confidence</div>
+        <div style="font-size:20px; font-weight:600; color:#185FA5;">{confidence}%</div>
+      </div>
+      <div style="background:#f0f4fb; border-radius:8px; padding:10px 14px;">
+        <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.05em;">Malignancy Risk</div>
+        <div style="font-size:20px; font-weight:600; color:{'#A32D2D' if risk_pct > 50 else '#3B6D11'};">{risk_pct}%</div>
+      </div>
+    </div>
+    """
+
+    radar  = make_radar(vals)
+    risk_bar = make_risk_bar(risk_pct)
+
+    return diag_html, radar, risk_bar
+
+
+# ── Custom CSS ────────────────────────────────────────────────────────────────
+css = """
+body, .gradio-container { background: #f0f4fb !important; font-family: 'Segoe UI', sans-serif; }
+.gr-button-primary { background: #185FA5 !important; border-color: #185FA5 !important; font-weight: 600; }
+.gr-button-primary:hover { background: #0C447C !important; }
+.gr-box, .gr-form { border-radius: 12px !important; }
+.gr-panel { border-radius: 14px !important; background: #fff !important; box-shadow: 0 1px 8px rgba(0,0,0,0.06) !important; }
+label { font-size: 13px !important; font-weight: 500 !important; color: #444 !important; }
+"""
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue"), css=css) as demo:
+
+    gr.HTML("""
+    <div style="display:flex; align-items:center; gap:14px; padding:8px 0 18px;">
+      <div style="background:#B5D4F4; border-radius:10px; padding:8px 10px; font-size:26px; line-height:1;">🧬</div>
+      <div>
+        <div style="font-size:22px; font-weight:600; color:#0C447C;">Breast Cancer Diagnostic Assistant</div>
+        <div style="font-size:13px; color:#888;">Wisconsin Diagnostic Breast Cancer · ML-powered analysis</div>
+      </div>
+    </div>
+    """)
+
+    with gr.Row():
+
+        # ── LEFT: inputs ──────────────────────────────────────────────────────
+        with gr.Column(scale=1):
+            gr.Markdown("### Patient Metrics")
+            with gr.Tab("Mean"):
+                radius      = gr.Slider(6,    30,    value=14,    step=0.1,  label="Radius Mean")
+                texture     = gr.Slider(9,    40,    value=19,    step=0.1,  label="Texture Mean")
+                perimeter   = gr.Slider(40,   190,   value=90,    step=0.5,  label="Perimeter Mean")
+                area        = gr.Slider(140,  2500,  value=600,   step=5,    label="Area Mean")
+                smoothness  = gr.Slider(0.05, 0.17,  value=0.098, step=0.001,label="Smoothness Mean")
+                compactness = gr.Slider(0.02, 0.35,  value=0.10,  step=0.005,label="Compactness Mean")
+
+            btn = gr.Button("🔬  Run Diagnostic", variant="primary", size="lg")
+
+        # ── RIGHT: outputs ────────────────────────────────────────────────────
+        with gr.Column(scale=2):
+            gr.Markdown("### Analysis Results")
+            diag_out     = gr.HTML(label="Diagnosis")
+            risk_bar_out = gr.Plot(label="Risk level")
+            with gr.Row():
+                radar_out = gr.Plot(label="Feature Radar")
+
+    inputs  = [radius, texture, perimeter, area, smoothness, compactness]
+    outputs = [diag_out, radar_out, risk_bar_out]
+
+    btn.click(fn=run_diagnostic, inputs=inputs, outputs=outputs)
+
+    # Auto-run on launch
+    demo.load(fn=run_diagnostic, inputs=inputs, outputs=outputs)
+
+demo.launch(share=True)
